@@ -78,7 +78,7 @@ n_resp_per_prompt=5
 train_prompt_mini_bsz=32
 total_rollout_steps=$(((512*400)))
 staleness_threshold=0.5
-trigger_parameter_sync_step=1
+trigger_parameter_sync_step=4
 require_batches=1
 partial_rollout=True
 
