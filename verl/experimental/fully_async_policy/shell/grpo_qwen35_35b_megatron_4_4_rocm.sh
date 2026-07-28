@@ -76,11 +76,12 @@ train_prompt_bsz=0
 gen_prompt_bsz=1
 n_resp_per_prompt=5
 train_prompt_mini_bsz=32
-total_rollout_steps=$(((512*400)))
-staleness_threshold=0.5
+num_train_steps=400
+total_rollout_steps=$((32*num_train_steps))
+staleness_threshold=0
 trigger_parameter_sync_step=1
 require_batches=1
-partial_rollout=True
+partial_rollout=False
 
 # Environment
 export CUDA_DEVICE_MAX_CONNECTIONS=1
@@ -123,8 +124,8 @@ python -m verl.experimental.fully_async_policy.fully_async_main \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
     actor_rollout_ref.actor.entropy_coeff=0 \
     actor_rollout_ref.actor.optim.lr_decay_style='constant' \
-    actor_rollout_ref.actor.optim.weight_decay=0.1 \
-    actor_rollout_ref.actor.optim.lr_decay_steps=${total_rollout_steps} \
+    actor_rollout_ref.actor.optim.weight_decay=0.01 \
+    actor_rollout_ref.actor.optim.lr_decay_steps=${num_train_steps} \
     actor_rollout_ref.actor.megatron.param_offload=False \
     actor_rollout_ref.actor.megatron.optimizer_offload=${offload} \
     actor_rollout_ref.actor.megatron.grad_offload=False \
@@ -168,11 +169,12 @@ python -m verl.experimental.fully_async_policy.fully_async_main \
     trainer.nnodes="${NNODES_TRAIN}" \
     trainer.n_gpus_per_node="${N_GPUS_TRAIN}" \
     trainer.default_local_dir="${CKPTS_DIR}" \
-    trainer.resume_mode=auto \
+    trainer.resume_mode=disable \
     trainer.val_before_train=False \
     trainer.test_freq=5 \
     trainer.save_freq=100 \
-    trainer.total_epochs=10 \
+    trainer.total_epochs=100 \
+    trainer.total_training_steps=${num_train_steps} \
     rollout.nnodes="${NNODES_ROLLOUT}" \
     rollout.n_gpus_per_node="${N_GPUS_ROLLOUT}" \
     rollout.total_rollout_steps="${total_rollout_steps}" \
