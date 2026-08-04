@@ -70,19 +70,20 @@ train_prompt_bsz=0
 gen_prompt_bsz=1
 n_resp_per_prompt=5
 train_prompt_mini_bsz=32
-num_train_steps=400
-total_rollout_steps=$((32*num_train_steps))
+num_train_steps=200
+total_rollout_steps=25600
 staleness_threshold=0.5
 trigger_parameter_sync_step=4
 require_batches=1
 partial_rollout=False
 
 # Environment
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 export VLLM_ALLREDUCE_USE_SYMM_MEM=0
 export HYDRA_FULL_ERROR=1
 
-mkdir -p logs "${CKPTS_DIR}"
+mkdir -p "${CKPTS_DIR}"
 
 python -m verl.experimental.fully_async_policy.fully_async_main \
     --config-path=config \
@@ -124,7 +125,7 @@ python -m verl.experimental.fully_async_policy.fully_async_main \
     +actor_rollout_ref.actor.optim.override_optimizer_config.overlap_cpu_optimizer_d2h_h2d=False \
     +actor_rollout_ref.actor.optim.override_optimizer_config.use_precision_aware_optimizer=False \
     +actor_rollout_ref.actor.optim.override_optimizer_config.optimizer_cpu_offload=False \
-    ++actor_rollout_ref.actor.megatron.override_transformer_config.attention_backend=TRITON_ATTN \
+    +actor_rollout_ref.actor.optim.override_optimizer_config.optimizer_offload_fraction=0 \
     +actor_rollout_ref.actor.megatron.override_transformer_config.recompute_method=uniform \
     +actor_rollout_ref.actor.megatron.override_transformer_config.recompute_granularity=full \
     +actor_rollout_ref.actor.megatron.override_transformer_config.recompute_num_layers=1 \
@@ -138,6 +139,8 @@ python -m verl.experimental.fully_async_policy.fully_async_main \
     actor_rollout_ref.rollout.tensor_model_parallel_size=${gen_tp} \
     actor_rollout_ref.rollout.dtype=bfloat16 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.7 \
+    +actor_rollout_ref.rollout.engine_kwargs.vllm.attention_backend=TRITON_ATTN \
+    +actor_rollout_ref.rollout.engine_kwargs.vllm.disable_custom_all_reduce=True \
     actor_rollout_ref.rollout.checkpoint_engine.update_weights_bucket_megabytes=1024 \
     actor_rollout_ref.rollout.calculate_log_probs=True \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
@@ -150,7 +153,6 @@ python -m verl.experimental.fully_async_policy.fully_async_main \
     actor_rollout_ref.ref.megatron.tensor_model_parallel_size=${train_tp} \
     actor_rollout_ref.ref.megatron.expert_model_parallel_size=${train_ep} \
     actor_rollout_ref.ref.megatron.expert_tensor_parallel_size=1 \
-    actor_rollout_ref.ref.megatron.param_offload=${offload} \
     actor_rollout_ref.hybrid_engine=False \
     algorithm.use_kl_in_reward=${use_kl_in_reward} \
     trainer.critic_warmup=0 \
@@ -164,7 +166,7 @@ python -m verl.experimental.fully_async_policy.fully_async_main \
     trainer.val_before_train=False \
     trainer.test_freq=5 \
     trainer.save_freq=100 \
-    trainer.total_epochs=100 \
+    trainer.total_epochs=10 \
     trainer.total_training_steps=${num_train_steps} \
     rollout.nnodes="${NNODES_ROLLOUT}" \
     rollout.n_gpus_per_node="${N_GPUS_ROLLOUT}" \
@@ -173,4 +175,4 @@ python -m verl.experimental.fully_async_policy.fully_async_main \
     async_training.trigger_parameter_sync_step="${trigger_parameter_sync_step}" \
     async_training.require_batches="${require_batches}" \
     async_training.partial_rollout="${partial_rollout}" \
-    "$@" 2>&1 | tee "logs/verl_qwen3_5_35b_fully_async_$(date +%Y%m%d_%H%M).log"
+    "$@"
