@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
 # Qwen3.5-35B-A3B MoE GRPO with Megatron + Fully Async Policy
 #
-# Structure mirrors:
-#   verl/experimental/fully_async_policy/shell/grpo_qwen3_235b_megatron_npu.sh
-# Model-specific (Qwen3.5-35B-A3B) settings taken from:
-#   examples/grpo_trainer/run_qwen3_5_35b_megatron.sh
-#
 # Entry point:
 #   verl.experimental.fully_async_policy.fully_async_main
 #   config: fully_async_ppo_megatron_trainer.yaml
@@ -123,8 +118,6 @@ python -m verl.experimental.fully_async_policy.fully_async_main \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
     actor_rollout_ref.actor.entropy_coeff=0 \
     actor_rollout_ref.actor.optim.lr_decay_style='constant' \
-    actor_rollout_ref.actor.optim.weight_decay=0.01 \
-    actor_rollout_ref.actor.optim.lr_decay_steps=${num_train_steps} \
     actor_rollout_ref.actor.megatron.param_offload=False \
     actor_rollout_ref.actor.megatron.optimizer_offload=False \
     actor_rollout_ref.actor.megatron.grad_offload=False \
