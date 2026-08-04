@@ -15,7 +15,7 @@
 set -xeuo pipefail
 
 project_name=${PROJECT_NAME:-'verl_grpo_qwen3_5_35b_geo3k'}
-exp_name=${EXP_NAME:-'qwen3_5_35b_megatron_fully_async'}
+exp_name=${EXP_NAME:-"qwen3_5_35b_megatron_fully_async_$(date +%Y%m%d_%H%M)"}
 
 MODEL_PATH=${MODEL_PATH:-Qwen3.5-35B-A3B}
 CKPTS_DIR=${CKPTS_DIR:-"${HOME}/ckpts/${project_name}/${exp_name}"}
