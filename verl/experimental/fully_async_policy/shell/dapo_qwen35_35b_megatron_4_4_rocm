@@ -103,7 +103,6 @@ python -m verl.experimental.fully_async_policy.fully_async_main \
     actor_rollout_ref.model.use_remove_padding=False \
     actor_rollout_ref.actor.optim.lr=1e-6 \
     actor_rollout_ref.actor.ppo_mini_batch_size=${train_prompt_mini_bsz} \
-    actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu=${train_ppo_micro_batch_size_per_gpu} \
     actor_rollout_ref.actor.use_dynamic_bsz=${use_dynamic_bsz} \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=${actor_ppo_max_token_len} \
     actor_rollout_ref.actor.megatron.pipeline_model_parallel_size=${train_pp} \
@@ -118,16 +117,16 @@ python -m verl.experimental.fully_async_policy.fully_async_main \
     actor_rollout_ref.actor.kl_loss_coef=${kl_loss_coef} \
     actor_rollout_ref.actor.clip_ratio_low=${clip_ratio_low} \
     actor_rollout_ref.actor.clip_ratio_high=${clip_ratio_high} \
+    actor_rollout_ref.actor.clip_ratio_c=10.0 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
     actor_rollout_ref.actor.entropy_coeff=0 \
     actor_rollout_ref.actor.optim.lr_decay_style='constant' \
-    actor_rollout_ref.actor.use_kl_loss=${use_kl_loss} \
     actor_rollout_ref.actor.megatron.optimizer_offload=False \
     actor_rollout_ref.actor.megatron.grad_offload=False \
     +actor_rollout_ref.actor.optim.override_optimizer_config.overlap_cpu_optimizer_d2h_h2d=False \
     +actor_rollout_ref.actor.optim.override_optimizer_config.use_precision_aware_optimizer=False \
     +actor_rollout_ref.actor.optim.override_optimizer_config.optimizer_cpu_offload=False \
-    ++actor_rollout_ref.actor.megatron.override_transformer_config.attention_backend=TRITON_ATTN \
+    +actor_rollout_ref.actor.megatron.override_transformer_config.attention_backend=TRITON_ATTN \
     +actor_rollout_ref.actor.megatron.override_transformer_config.recompute_method=uniform \
     +actor_rollout_ref.actor.megatron.override_transformer_config.recompute_granularity=full \
     +actor_rollout_ref.actor.megatron.override_transformer_config.recompute_num_layers=1 \
@@ -165,14 +164,13 @@ python -m verl.experimental.fully_async_policy.fully_async_main \
     trainer.default_local_dir="${CKPTS_DIR}" \
     trainer.resume_mode=disable \
     trainer.val_before_train=False \
-    trainer.test_freq=5 \
+    trainer.test_freq=10 \
     trainer.save_freq=100 \
-    trainer.total_epochs=100 \
+    trainer.total_epochs=10 \
     rollout.nnodes="${NNODES_ROLLOUT}" \
     rollout.n_gpus_per_node="${N_GPUS_ROLLOUT}" \
     rollout.total_rollout_steps="${total_rollout_steps}" \
     async_training.staleness_threshold="${staleness_threshold}" \
     async_training.trigger_parameter_sync_step="${trigger_parameter_sync_step}" \
     async_training.require_batches="${require_batches}" \
-    async_training.partial_rollout="${partial_rollout}" \
-    "$@" 2>&1 | tee "logs/verl_qwen3_5_35b_fully_async_$(date +%Y%m%d_%H%M).log"
+    async_training.partial_rollout="${partial_rollout}" 
