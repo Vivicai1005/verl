@@ -85,12 +85,14 @@ class BroadcastOperation:
         else:
             self.socket.recv_string()
             self.metadata = self.socket.recv_pyobj()
+            self.bucket = self.bucket[: self.metadata["length"]]
 
         # broadcast tensor via NCCL
         collective.broadcast(self.bucket, src_rank=0, group_name=self.group_name)
 
     async def wait_for_complete(self) -> dict[str, TensorMeta]:
         """Wait for the broadcast operation to complete.
+        (This does not guarantee that the NCCL kernel has finished, only that it has been enqueued.)
 
         Returns:
             dict[str, TensorMeta]: The bucket meta after broadcast.
@@ -263,8 +265,8 @@ class NCCLCheckpointEngine(CheckpointEngine):
                 broadcast_op = BroadcastOperation(
                     rank=self.rank,
                     group_name=self.group_name,
-                    bucket=send_buf,
-                    metadata={"bucket_meta": bucket_meta, "is_last": False},
+                    bucket=send_buf[:offset],
+                    metadata={"bucket_meta": bucket_meta, "is_last": False, "length": offset},
                     socket=self.socket,
                     topic=self.topic,
                 )
@@ -290,12 +292,18 @@ class NCCLCheckpointEngine(CheckpointEngine):
         broadcast_op = BroadcastOperation(
             rank=self.rank,
             group_name=self.group_name,
-            bucket=send_buf,
-            metadata={"bucket_meta": bucket_meta, "is_last": True},
+            bucket=send_buf[:offset],
+            metadata={"bucket_meta": bucket_meta, "is_last": True, "length": offset},
             socket=self.socket,
             topic=self.topic,
         )
         await broadcast_op.wait_for_complete()
+
+        # the wait_for_complete() function just waits for the NCCL kernel to be enqueued,
+        # not for the kernel to finish, hence we need to synchronize to make sure the
+        # buffer does not get freed before the kernel finishes.
+        torch.cuda.synchronize()
+
         logger.info(f"Rank {self.rank} send weights done, time cost: {time.time() - start_time:.2f}s")
 
     @torch.no_grad()
@@ -332,8 +340,13 @@ class NCCLCheckpointEngine(CheckpointEngine):
             topic=self.topic,
         )
         metadata = await broadcast_op.wait_for_complete()
-        total_bytes += self.bucket_size
+        total_bytes += metadata["length"]
         total_params += len(metadata["bucket_meta"])
+
+        # wait for the NCCL broadcast kernel to finish before we yield the tensors
+        # otherwise if the buffer is clone using a non-blocking copy, it may
+        # lead to data corruption
+        torch.cuda.synchronize()
 
         # swap send_buf and recv_buf
         send_buf, recv_buf = recv_buf, send_buf
@@ -355,7 +368,7 @@ class NCCLCheckpointEngine(CheckpointEngine):
 
             # 3. wait for next bucket broadcast finish
             metadata = await broadcast_op.wait_for_complete()
-            total_bytes += self.bucket_size
+            total_bytes += metadata["length"]
             total_params += len(metadata["bucket_meta"])
 
             # 4. swap send_buf and recv_buf
