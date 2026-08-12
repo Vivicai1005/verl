@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -xeuo pipefail
 
-project_name='DAPO'
-exp_name='DAPO-Qwen3.5-35B-A3B-MATH-megatron-fully-async-4-4'
+project_name=${PROJECT_NAME:-'verl_dapo_qwen3_5_35b_math'}
+exp_name=${EXP_NAME:-"qwen3_5_35b_megatron_fully_async_$(date +%Y%m%d_%H%M)"}
 
 # Ray
 # RAY_ADDRESS=${RAY_ADDRESS:-"http://localhost:8265"}
