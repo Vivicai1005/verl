@@ -77,7 +77,6 @@ train_etp=1
 # vanilla_mbridge=True to fall back to the installed standalone mbridge package.
 use_mbridge=True
 vanilla_mbridge=True
-attn_backend=auto
 moe_aux_loss_coeff=0.001 # router load-balancing loss
 recompute_method=uniform
 recompute_granularity=full
@@ -154,7 +153,6 @@ python -m verl.experimental.fully_async_policy.fully_async_main \
     actor_rollout_ref.actor.megatron.use_mbridge=${use_mbridge} \
     actor_rollout_ref.actor.megatron.vanilla_mbridge=${vanilla_mbridge} \
     actor_rollout_ref.actor.megatron.dtype=bfloat16 \
-    actor_rollout_ref.actor.megatron.override_transformer_config.attention_backend=${attn_backend} \
     actor_rollout_ref.actor.megatron.override_transformer_config.recompute_method=${recompute_method} \
     actor_rollout_ref.actor.megatron.override_transformer_config.recompute_granularity=${recompute_granularity} \
     actor_rollout_ref.actor.megatron.override_transformer_config.recompute_num_layers=${recompute_num_layers} \
@@ -168,6 +166,7 @@ python -m verl.experimental.fully_async_policy.fully_async_main \
     actor_rollout_ref.rollout.max_model_len=${max_model_length} \
     actor_rollout_ref.rollout.max_num_batched_tokens=${max_model_length} \
     actor_rollout_ref.rollout.max_num_seqs=1024 \
+    +actor_rollout_ref.rollout.engine_kwargs.vllm.attention_backend=TRITON_ATTN \
     actor_rollout_ref.rollout.temperature=${temperature} \
     actor_rollout_ref.rollout.top_p=${top_p} \
     actor_rollout_ref.rollout.top_k=${top_k} \
