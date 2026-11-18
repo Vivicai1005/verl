@@ -1,6 +1,6 @@
 # MXFP8 RL on AMD ROCm
 
-Last updated: 11/17/2026
+Last updated: 11/18/2026
 
 AMD Instinct MI350 / MI355 (gfx950) decode the OCP MXFP8 format natively: E4M3 elements with one E8M0 scale per
 32-element block. This page records running the [MXFP8 RL](mxfp8.md) recipe, Transformer Engine's MXFP8 training
@@ -97,26 +97,46 @@ likely the same cause), and rollout TP1 (eight vLLM replicas instead of four) ma
 
 **Configuration**
 
-- One 8×MI350X machine for both runs, `SEED=42`, so steps pair across runs; 10 steps
-- TP1 × EP8 × ETP1, selective recompute, the optimizer on the GPU; rollout vLLM TP2 with Triton MXFP8 MoE
-  (AITER off), `gpu_memory_utilization=0.4`
+- One 8×MI350X machine for every run, `SEED=42`, so steps pair across runs; 10 steps
+- TP1 × EP8 × ETP1, selective recompute, the optimizer on the GPU; rollout vLLM TP2, `gpu_memory_utilization=0.4`
+- The MoE rollout on vLLM's Triton kernels, or on AITER (`VLLM_ROCM_USE_AITER=1 VLLM_ROCM_USE_AITER_MOE=1`, the
+  AITER columns)
 - DAPO-Math-17k deduplicated to its 17,398 unique prompts
-- W&B: [wei-cai/qwen3-30b-a3b_dapo_mi350](https://wandb.ai/wei-cai/qwen3-30b-a3b_dapo_mi350), runs `mxfp8` and `bf16`
+- W&B: [wei-cai/qwen3-30b-a3b_dapo_mi350](https://wandb.ai/wei-cai/qwen3-30b-a3b_dapo_mi350), runs `bf16`, `mxfp8`,
+  `bf16_aiter` and `mxfp8_aiter`
 
-| mean of steps 1–10 | BF16/BF16 | MXFP8/MXFP8 |
-|---|---|---|
-| step time (s) | TBD | 419 |
-| generation (s) | TBD | 148 |
-| `old_log_prob` (s) | TBD | 45 |
-| ref (s) | TBD | 60 |
-| `update_actor` (s) | TBD | 130 |
-| `update_weights` (s) | TBD | 29 |
-| throughput (tokens/s/GPU) | TBD | 999 |
-| `rollout_corr/kl` | TBD | 0.0047 |
-| score | TBD | −0.101 |
-| peak memory (GB) | TBD | 210 |
+"X/Y" is training precision X, rollout precision Y. Step 1 is left out of the means: it includes one-time kernel
+compilation and is much slower for BF16 (894 s) than for MXFP8 (636 s); over steps 1–10 the step time is 433 s for
+BF16 and 419 s for MXFP8.
 
-<!-- TODO: fill in the BF16 column when the bf16 run finishes. -->
+| mean of steps 2–10 | BF16/BF16 | MXFP8/MXFP8 | BF16/BF16, AITER | MXFP8/MXFP8, AITER |
+|---|---|---|---|---|
+| step time (s) | 381 | 395 | 383 | 395 |
+| generation (s) | 141 | 141 | 134 | 134 |
+| `old_log_prob` (s) | 48 | 43 | 50 | 43 |
+| ref (s) | 45 | 60 | 46 | 61 |
+| `update_actor` (s) | 137 | 121 | 145 | 124 |
+| `update_weights` (s) | 7.6 | 28.9 | 7.9 | 32.9 |
+| throughput (tokens/s/GPU) | 1078 | 1044 | 1074 | 1036 |
+| `rollout_corr/kl` | 0.0018 | 0.0047 | 0.0018 | 0.0048 |
+| score | −0.085 | −0.109 | −0.092 | −0.086 |
+| peak memory (GB) | 208 | 210 | 208 | 205 |
+
+Results and observations:
+
+- With this layout MXFP8 is not faster end to end on MI350X: the step takes 3.5% longer than BF16. MXFP8 shortens
+  `update_actor` by 12% and `old_log_prob` by 11%, but generation does not gain (141 s in both, against −24% on B200),
+  and two costs outweigh the savings:
+  - `update_weights` grows by 21 s: verl quantizes the synced weights to MXFP8 on the trainer side every step.
+  - The BF16 reference forward grows by 14 s: with `NVTE_USE_HIPKITTENS_GROUPED_GEMM=1`, which the MXFP8 actor
+    needs, the reference model's BF16 experts also run Transformer Engine's grouped GEMM path (CK's `ck_tile`
+    kernel in the profile) instead of one hipBLASLt GEMM per expert.
+- The rollout–trainer mismatch is 2.6× BF16's (0.0047 against 0.0018), the same ratio as on B200 (0.0045 against
+  0.0018).
+- AITER shortens generation by 5% for both precisions (141 to 134 s) and leaves the mismatch unchanged; the step time
+  does not change beyond run-to-run noise. AITER's FlyDSL MoE ran with its default configurations: it has no tuned
+  configuration for these shapes.
+- Ten steps are enough for speed and mismatch, not for the score.
 
 ## Example: Qwen3.5-35B-A3B
 
