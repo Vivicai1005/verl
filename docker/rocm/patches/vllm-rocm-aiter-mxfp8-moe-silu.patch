@@ -1,0 +1,28 @@
+diff --git a/vllm/model_executor/layers/fused_moe/experts/aiter_mxfp8_moe.py b/vllm/model_executor/layers/fused_moe/experts/aiter_mxfp8_moe.py
+index 1efb058..a95861e 100644
+--- a/vllm/model_executor/layers/fused_moe/experts/aiter_mxfp8_moe.py
++++ b/vllm/model_executor/layers/fused_moe/experts/aiter_mxfp8_moe.py
+@@ -62,6 +62,10 @@ class AiterMxfp8Experts(Mxfp8TritonExpertsBase):
+         is_supported, reason = super().is_supported_config(
+             cls, moe_config, weight_key, activation_key, activation_format
+         )
++        if is_supported and moe_config.activation == MoEActivation.SILU:
++            # Plain SiLU-gated experts (Qwen3 / Qwen3.5 MoE): aiter's FlyDSL MXFP8
++            # MoE implements silu(gate) * up as ActivationType.Silu.
++            return is_supported, reason
+         if (
+             is_supported
+             and moe_config.activation != MoEActivation.SWIGLUOAI_UNINTERLEAVE
+@@ -126,7 +130,11 @@ class AiterMxfp8Experts(Mxfp8TritonExpertsBase):
+             topk_weights.to(torch.float32),
+             topk_ids.to(torch.int32),
+             expert_mask=expert_mask,
+-            activation_method=ActivationType.Swiglu.value,
++            activation_method=(
++                ActivationType.Silu
++                if activation == MoEActivation.SILU
++                else ActivationType.Swiglu
++            ).value,
+             quant_method=QuantType.per_1x32.value,
+             doweight_stage1=apply_router_weight_on_input,
+             w1_scale=self.w1_scale_val,

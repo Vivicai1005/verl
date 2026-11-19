@@ -1,0 +1,178 @@
+# syntax=docker/dockerfile:1
+#
+# verl Megatron QAT (ModelOpt fake quantization) + vLLM rollout on AMD Instinct MI350 / MI355 (gfx950)
+#
+# Base: rocm/primus. It already ships Python 3.12 in /opt/venv, the ROCm "TheRock" SDK as pip packages,
+#       PyTorch, Transformer Engine (ROCm fork), aiter, flash-attn (CK), apex, causal-conv1d and
+#       flash-linear-attention. Nothing in that stack is rebuilt or replaced here: every pip install below
+#       runs against a constraints file that pins the base image's torch / TE / triton / aiter / apex.
+# Adds: vLLM built from source against the base image's torch, Megatron-Core and Megatron-Bridge at the
+#       versions verl's pyproject.toml locks, NVIDIA ModelOpt (QAT fake quantizers), TileLang (verl's
+#       QAT / weight-export kernels), and verl itself from the build context (this branch).
+#
+# Build from the repository root (BuildKit is required):
+#   DOCKER_BUILDKIT=1 docker build -f docker/rocm/Dockerfile.rocm.primus-qat -t verl-qat:primus-v26.9 .
+#
+# Run (pick GPUs with --device=/dev/dri/renderD<N>, not HIP_VISIBLE_DEVICES: Ray sets that per worker):
+#   docker run -it --device=/dev/kfd --device=/dev/dri --group-add video --ipc=host --network=host \
+#       --shm-size=64g --security-opt seccomp=unconfined -v /path/to/models:/models verl-qat:primus-v26.9
+#
+# Useful build args:
+#   BASE_IMAGE  rocm/primus tag                         (default rocm/primus:v26.9)
+#   GPU_ARCH    vLLM kernel targets; "gfx942;gfx950" for MI300 + MI350, single arch halves the build
+#   MAX_JOBS    parallel compile jobs for the vLLM build
+#   VLLM_TAG    vLLM git ref                            (default v0.32.0, the version verl locks)
+
+ARG BASE_IMAGE=rocm/primus:v26.9
+FROM ${BASE_IMAGE}
+
+ARG GPU_ARCH="gfx950"
+ARG MAX_JOBS=128
+
+WORKDIR /workspace
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# ---------------------------------------------------------------------------------------------------------
+# 0. Pin the base image's ROCm / PyTorch stack. Every later `pip install -c ${PIP_CONSTRAINT}` must keep
+#    these exact builds; a resolver conflict fails the build instead of silently pulling a CUDA wheel.
+# ---------------------------------------------------------------------------------------------------------
+ENV PIP_CONSTRAINT_FILE=/opt/verl-base-constraints.txt
+RUN python3 - <<'EOF'
+import importlib.metadata as md
+pinned = ["torch", "torchvision", "torchaudio", "triton", "transformer_engine", "apex",
+          "flash_attn", "amd-aiter", "causal_conv1d", "torchao"]
+lines = []
+for name in pinned:
+    try:
+        lines.append(f"{name}=={md.version(name)}")
+    except md.PackageNotFoundError:
+        pass
+open("/opt/verl-base-constraints.txt", "w").write("\n".join(lines) + "\n")
+print("\n".join(lines))
+EOF
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl ca-certificates libnuma-dev ccache vim \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------------------------------------
+# 1. vLLM from source. v0.32 ships a Rust frontend, so a Rust toolchain (the channel pinned by the tag's
+#    rust-toolchain.toml) is needed at build time. tools/use_existing_torch.py drops vLLM's own torch pins
+#    so the build links against the base image's torch.
+# ---------------------------------------------------------------------------------------------------------
+ENV CARGO_HOME=/root/.cargo \
+    RUSTUP_HOME=/root/.rustup \
+    PATH=/root/.cargo/bin:${PATH}
+
+ARG VLLM_REPO=https://github.com/vllm-project/vllm.git
+ARG VLLM_TAG=v0.32.0
+RUN git clone --depth 1 --branch ${VLLM_TAG} ${VLLM_REPO} /workspace/vllm \
+    && cd /workspace/vllm \
+    && TOOLCHAIN="$(grep '^channel' rust-toolchain.toml | sed 's/.*= *"\(.*\)"/\1/')" \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none \
+    && rustup toolchain install "${TOOLCHAIN}" --profile minimal \
+    && rustup default "${TOOLCHAIN}" \
+    && python3 tools/use_existing_torch.py \
+    && pip install --no-cache-dir -c ${PIP_CONSTRAINT_FILE} -r requirements/build/rust.txt \
+    && pip install --no-cache-dir -c ${PIP_CONSTRAINT_FILE} -r requirements/rocm.txt
+
+RUN cd /workspace/vllm \
+    && export VLLM_TARGET_DEVICE=rocm PYTORCH_ROCM_ARCH="${GPU_ARCH}" MAX_JOBS="${MAX_JOBS}" \
+              CARGO_BUILD_JOBS=16 \
+    && pip install --no-cache-dir --no-build-isolation --no-deps -v -e . 2>&1 | tail -n 200 \
+    && python3 -c "import vllm, vllm._C; print('vllm', vllm.__version__)"
+
+# ---------------------------------------------------------------------------------------------------------
+# 2. Megatron stack, at the versions verl's pyproject.toml pairs together:
+#      megatron-core core_v0.19.2  <->  megatron-bridge v0.6.2
+#    Both are installed deps-free (as verl does) so they cannot drag in CUDA torch / TE wheels.
+#    ModelOpt provides the fake quantizers verl's Megatron QAT installs (verl/utils/qat/modelopt.py).
+# ---------------------------------------------------------------------------------------------------------
+ARG MEGATRON_CORE_REF=core_v0.19.2
+ARG MEGATRON_BRIDGE_REF=v0.6.2
+ARG MODELOPT_VERSION=0.47.0
+RUN pip install --no-cache-dir --no-deps --no-build-isolation \
+        "megatron-core @ git+https://github.com/NVIDIA/Megatron-LM.git@${MEGATRON_CORE_REF}" \
+    && pip install --no-cache-dir --no-deps --no-build-isolation --ignore-requires-python \
+        "megatron-bridge @ git+https://github.com/NVIDIA-NeMo/Megatron-Bridge.git@${MEGATRON_BRIDGE_REF}" \
+    && pip install --no-cache-dir --no-deps "nvidia-modelopt==${MODELOPT_VERSION}" \
+    && pip install --no-cache-dir -c ${PIP_CONSTRAINT_FILE} "pulp<4.0" torchprofile
+
+# ---------------------------------------------------------------------------------------------------------
+# 3. verl from the build context (this branch), then the versions verl's pyproject.toml locks for the
+#    pieces that matter to QAT and to Qwen3.5. TileLang is re-pinned after vLLM because vLLM's ROCm
+#    requirements ask for an older release than verl's QAT kernels are written against.
+# ---------------------------------------------------------------------------------------------------------
+COPY . /workspace/verl
+RUN cd /workspace/verl \
+    && pip install --no-cache-dir -c ${PIP_CONSTRAINT_FILE} -e . \
+    && pip install --no-cache-dir -c ${PIP_CONSTRAINT_FILE} \
+        "transformers==5.16.1" \
+        "tokenizers==0.23.2" \
+        "tilelang==0.1.15" \
+        "megatron-energon==7.4.1" \
+        "flash-linear-attention==0.5.2" \
+        mathruler qwen_vl_utils math-verify pylatexenc cachetools einops nvtx \
+    && pip install --no-cache-dir --no-deps "tensordict==0.10.0" \
+    # main_ppo imports transfer_queue; setup.py does not list it. Deps-free as in pyproject.toml (pyzmq and
+    # msgspec, all it imports, are already installed).
+    && pip install --no-cache-dir --no-deps "TransferQueue==0.1.11"
+
+# ---------------------------------------------------------------------------------------------------------
+# 4. Runtime defaults for gfx950.
+#   NVTE_USE_GROUPED_GEMM_TRITON is left at TE's default (0, one hipBLASLt GEMM per expert). The base image's TE
+#                                   (023639b51) gives the Triton grouped GEMM a k_heavy_bwd tile needing 272 KB of
+#                                   LDS (gfx950 has 160 KB), so the MoE backward of narrow experts (Qwen3.5: K/N=4)
+#                                   fails with OutOfResources (the table from ROCm/TransformerEngine 7f2ca63b7b
+#                                   (#783), which fits, is docker/rocm/patches/te-gfx950-GMM.json; not applied here).
+#   HSA_ENABLE_IPC_MODE_LEGACY=1    CUDA-IPC style weight hand-off between the trainer and colocated vLLM
+# The base image exports NVTE_FLASH_ATTN=0 / NVTE_FUSED_ATTN=1; Megatron asserts these agree with
+# attention_backend, so run Megatron with
+#   actor_rollout_ref.actor.megatron.override_transformer_config.attention_backend=fused
+# (and the same for ref) instead of verl's default "flash".
+# ---------------------------------------------------------------------------------------------------------
+ENV HSA_ENABLE_IPC_MODE_LEGACY=1 \
+    NCCL_DEBUG=WARN \
+    ROCPROFILER_LOG_LEVEL=fatal
+
+# Ray counts AMD GPUs through the amdsmi Python module; the base ships it inside the ROCm SDK wheel but
+# not on sys.path, so without this link Ray reports 0 GPUs (same fix as docker/rocm/Dockerfile.rocm).
+RUN SP="$(python3 -c 'import site; print(site.getsitepackages()[0])')" \
+    && ln -sfn "${SP}/_rocm_sdk_core/share/amd_smi/amdsmi" "${SP}/amdsmi" \
+    && python3 -c "from ray._private.accelerators.amd_gpu import AMDGPUAcceleratorManager; import amdsmi"
+
+# The ROCm SDK wheels ship the runtime libraries twice: _rocm_sdk_core/lib (what torch loads) and
+# _rocm_sdk_devel/lib (byte-identical, separate files), and the base's LD_LIBRARY_PATH lists devel first.
+# A process can then hold one copy while something checks for the other, and two checks refuse that:
+#   rocprofiler-register  child of a process that exported ROCPROFILER_REGISTER_LIBRARY (core) aborts with
+#                         "already set ... not overriding" (vLLM's model-inspection subprocess)
+#   Triton AMD driver     "TheRock provides <core>/libamdhip64.so.7, but a different HIP runtime
+#                         <devel>/libamdhip64.so.7 is already loaded" (vLLM workers' first Triton kernel)
+# Replace every devel library that is byte-identical to a core one with a symlink to it.
+RUN SDK="$(python3 -c 'import site; print(site.getsitepackages()[0])')" \
+    && CORE_LIB="${SDK}/_rocm_sdk_core/lib" DEVEL_LIB="${SDK}/_rocm_sdk_devel/lib" \
+    && declare -A core_by_sum \
+    && while read -r sum path; do core_by_sum[$sum]="${path}"; done \
+           < <(find "${CORE_LIB}" -maxdepth 1 -type f -name '*.so*' -exec md5sum {} +) \
+    && n=0 \
+    && while read -r sum path; do \
+           if [ -n "${core_by_sum[$sum]:-}" ]; then ln -sf "${core_by_sum[$sum]}" "${path}"; n=$((n + 1)); fi; \
+       done < <(find "${DEVEL_LIB}" -maxdepth 1 -type f -name '*.so*' -exec md5sum {} +) \
+    && echo "linked ${n} devel libraries to their core copies" \
+    && test "$(readlink -f "${DEVEL_LIB}/libamdhip64.so.7")" = "$(readlink -f "${CORE_LIB}/libamdhip64.so.7")" \
+    && ROCPROFILER_REGISTER_LIBRARY="${CORE_LIB}/librocprofiler-sdk.so.1" python3 -c "import vllm"
+
+# Local modifications to the libraries installed above are kept as files in docker/rocm/patches/ and are NOT
+# applied in this image, so the image is the stock stack and every change is visible as a separate file:
+#   vllm-rocm-mxfp8-block32-scales-switch.patch  vLLM: VLLM_ROCM_MXFP8_BLOCK32_SCALES switch (MXFP8 refit)
+#   vllm-rocm-aiter-mxfp8-moe-silu.patch         vLLM: AITER MXFP8 MoE accepts SiLU experts
+#   te-gfx950-GMM.json                           Transformer Engine: gfx950 Triton grouped-GEMM tile table (#783)
+#   megatron_mxfp8_align.py                      Megatron-Core: pad routed-expert tokens to 256 for MXFP8 on ROCm
+
+RUN mkdir -p /workspace/.manifest \
+    && pip list > /workspace/.manifest/verl-qat-pip-list.txt \
+    && cp ${PIP_CONSTRAINT_FILE} /workspace/.manifest/ \
+    && rm -rf /root/.cache /root/.cargo/registry
+
+WORKDIR /workspace/verl
+CMD ["/usr/bin/bash"]
