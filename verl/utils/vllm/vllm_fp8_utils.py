@@ -153,6 +153,14 @@ def replace_parameter_preserve_subclass(
         setattr(layer, param_name, None)
         return
 
+    # Like vLLM's replace_parameter, keep the flags a kernel prep set on the new tensor (e.g. AITER's
+    # ``is_shuffled``, which picks the preshuffled MoE kernels); only the loader comes from the old param.
+    new_data_attrs = {
+        k: v
+        for k, v in vars(new_data).items()
+        if k not in ("weight_loader", "_weight_loader")
+        and not (inspect.ismethod(v) and isinstance(v.__self__, torch.Tensor))
+    }
     if isinstance(new_data, torch.nn.Parameter):
         new_data = new_data.data
 
@@ -176,6 +184,8 @@ def replace_parameter_preserve_subclass(
         repacked.add(param_name)
     param = torch.nn.Parameter(new_data, requires_grad=False)
     _copy_param_subclass_attrs(param, old_param)
+    for attr, value in new_data_attrs.items():
+        setattr(param, attr, value)
     setattr(layer, param_name, param)
 
 

@@ -222,3 +222,30 @@ def test_direct_same_shape_parameter_replacement_is_restaged():
         finally:
             for p in patchers:
                 p.stop()
+
+
+def _aiter_like_process(self, layer):
+    """ROCm AITER MoE prep: shuffled copies flagged ``is_shuffled``, which picks AITER's preshuffled kernels."""
+    for name in ("w13_weight", "w2_weight"):
+        shuffled = _swap_halves(getattr(layer, name).data)
+        shuffled.is_shuffled = True
+        _fp8().replace_parameter(layer, name, shuffled)
+
+
+def test_kernel_flags_on_the_new_tensor_survive_load_and_refit():
+    module = _load_fp8_utils()
+    with _StubVllmFp8(_aiter_like_process) as stub:
+        patchers = module.build_fp8_method_patchers(version.parse("0.24.0"))
+        for p in patchers:
+            p.start()
+        try:
+            model, layer = _loaded_layer(module, stub)
+            assert layer.w13_weight.is_shuffled and layer.w2_weight.is_shuffled
+
+            staged = module.stage_fp8_params_for_loading(model)
+            assert staged == [layer]
+            module.process_fp8_weights_after_loading(staged)
+            assert layer.w13_weight.is_shuffled and layer.w2_weight.is_shuffled
+        finally:
+            for p in patchers:
+                p.stop()
