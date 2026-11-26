@@ -13,14 +13,9 @@ How the ROCm settings below were chosen, the comparisons behind them, and where 
 ## Requirements
 
 - AMD Instinct MI350 / MI355 (gfx950)
-- The `docker/rocm/Dockerfile.rocm.primus-v26.10` image: `rocm/primus:v26.10` (ROCm "TheRock" SDK 10.3, PyTorch 2.16,
-  Transformer Engine 2.21.0.dev0, ROCm fork at `b5c00f432`), Megatron-Core core_v0.19.2, Megatron-Bridge v0.6.2,
-  vLLM v0.34.0
-- The three vLLM 0.34 patches in `docker/rocm/patches/`, applied in the container in this order (the Dockerfile
-  leaves the stack stock and lists what each one fixes):
-  `vllm-0.34-rocm-mxfp8-block32-scales-switch.patch`, `vllm-0.34-rocm-cumem-pinned-backup.patch`,
-  `vllm-0.34-rocm-mxfp8-linear-opaque-op.patch`
-- `NVTE_ROCM_ENABLE_MXFP8=1`, which enables Transformer Engine's MXFP8 path on gfx95x
+- The `docker/rocm/Dockerfile.rocm103` image (ROCm 10.3, built on `rocm/primus:v26.10` with vLLM 0.34), with the vLLM
+  patches in `docker/rocm/patches/` applied as the Dockerfile describes
+- `NVTE_ROCM_ENABLE_MXFP8=1`
 
 ## Configuration
 
@@ -50,8 +45,7 @@ Notes:
 
 ## Rollout kernels
 
-The MXFP8 dense linears run on vLLM's gfx950 kernel (`RocmDotScaledMxfp8LinearKernel`, Triton `tl.dot_scaled`). With
-`VLLM_ROCM_USE_AITER=1 VLLM_ROCM_USE_AITER_MOE=1` the MoE runs on AITER, whose MXFP8 MoE uses FlyDSL kernels.
+The rollout runs vLLM with AITER enabled: `VLLM_ROCM_USE_AITER=1 VLLM_ROCM_USE_AITER_MOE=1`.
 
 ## Example: Qwen3-30B-A3B on DAPO-Math-17k
 
@@ -84,7 +78,7 @@ on vLLM with TP2 and `gpu_memory_utilization=0.4`. By precision it sets:
 
 - One 4×MI355X machine, the same four GPUs for every run, back to back; `SEED=42`, so steps pair across runs; 10 steps
 - The script's defaults (above); the rollout MoE on AITER (`VLLM_ROCM_USE_AITER=1 VLLM_ROCM_USE_AITER_MOE=1`)
-- The `docker/rocm/Dockerfile.rocm.primus-v26.10` image with its three vLLM 0.34 patches
+- The `docker/rocm/Dockerfile.rocm103` image with its vLLM 0.34 patches
 - DAPO-Math-17k deduplicated to its 17,398 unique prompts
 - W&B: [wei-cai/qwen3-30b-a3b_dapo_mi355](https://wandb.ai/wei-cai/qwen3-30b-a3b_dapo_mi355), runs
   `bf16ck_v2610_aiter2` and `mxfp8_v2610_aiter_opq3`
@@ -114,11 +108,3 @@ Results and observations:
 - The machine is shared, and host-memory reclaim by other jobs slowed the training phases of a few steps. Over the
   steps where neither run saw reclaim (3, 5 and 6) the step takes 352.4 s for BF16 and 349.5 s for MXFP8.
 - Ten steps are enough for speed and mismatch, not for the score.
-
-## Example: Qwen3.5-35B-A3B
-
-Qwen3.5-35B-A3B (MoE, 40 layers, GatedDeltaNet and full attention 3:1, 256 routed experts) cannot use Transformer
-Engine's MXFP8 training recipe on gfx950 yet. On gfx950 every MXFP8 GEMM needs its reduction dimension K to be a
-multiple of 128 (32 on NVIDIA GPUs and gfx1250), and the fused GatedDeltaNet `in_proj` of Qwen3.5 is 12,352 wide
-(6,176 per rank at TP2), which is not a multiple of 128 at any TP size. See
-[the performance notes](mxfp8_rocm_optimization.md#qwen35-35b-a3b-mxfp8-gemm-k--128-on-gfx950) for the details.

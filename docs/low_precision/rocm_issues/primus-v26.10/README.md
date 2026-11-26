@@ -4,7 +4,7 @@ Last updated: 11/26/2026
 
 记录日期：2026-11-24　　机器：smci355-ccs-aus-n06-05（MI355X，gfx950）
 
-镜像 `verl-qat:primus-v26.10`（Dockerfile：`docker/rocm/Dockerfile.rocm.primus-v26.10`）把 base 从 rocm/primus:v26.9 换成 v26.10，vLLM 从 0.32.0 换成 0.34.0。升级中遇到两件需要记录的事：
+镜像 `verl-qat:primus-v26.10`（Dockerfile：`docker/rocm/Dockerfile.rocm103`）把 base 从 rocm/primus:v26.9 换成 v26.10，vLLM 从 0.32.0 换成 0.34.0。升级中遇到两件需要记录的事：
 
 - **第一部分：** vLLM 0.34 在 ROCm 上 sleep 失败。已用临时 patch 绕过，根因未完全查清。
 - **第二部分：** v26.10 里的 TE 修复了 CK BF16 grouped GEMM 的性能问题，BF16 专家 GEMM 因此改用 CK grouped。已验证，示例脚本已修改。
@@ -243,7 +243,7 @@ MXFP8 日志末尾有一段 W&B atexit teardown 的 Traceback，发生在训练�
 repo 内：
 
 - `docker/rocm/patches/vllm-0.34-rocm-cumem-pinned-backup.patch`：第一部分的修复。
-- `docker/rocm/Dockerfile.rocm.primus-v26.10`：新镜像。
+- `docker/rocm/Dockerfile.rocm103`：新镜像。
 
 n06 上（`/mnt/disk/verl/weicai12-qat/`）：
 

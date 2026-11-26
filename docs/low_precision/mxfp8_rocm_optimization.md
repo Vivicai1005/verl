@@ -3,7 +3,7 @@
 Last updated: 11/26/2026
 
 本文是 [MXFP8 RL on AMD ROCm](mxfp8_rocm.md) 的补充，记录其中 ROCm 相关设置的由来、背后的对比实验，以及时间都花在了哪里。
-如无特别说明，下面的数据都来自一台 4×MI355X 机器上的 Qwen3-30B-A3B，使用 `docker/rocm/Dockerfile.rocm.primus-v26.10`
+如无特别说明，下面的数据都来自一台 4×MI355X 机器上的 Qwen3-30B-A3B，使用 `docker/rocm/Dockerfile.rocm103`
 镜像及其三个 vLLM 0.34 patch，采用示例脚本的默认配置，rollout 的 MoE 走 AITER。
 
 ## 让所有 MXFP8 GEMM 都走 HipKittens

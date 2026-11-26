@@ -4,7 +4,7 @@
 # ROCm version of examples/mxfp8/run_qwen3_30b_a3b_megatron.sh for one 4-GPU node. PRECISION=mxfp8 trains with
 # Transformer Engine's MXFP8 recipe and serves the rollout in MXFP8, experts included; PRECISION=bf16 runs the same
 # job in BF16 as the baseline. See docs/low_precision/mxfp8.md and docs/low_precision/mxfp8_rocm.md.
-# Run inside the docker/rocm/Dockerfile.rocm.primus-v26.10 image, with the vLLM 0.34 patches from docker/rocm/patches
+# Run inside the docker/rocm/Dockerfile.rocm103 image, with the vLLM 0.34 patches from docker/rocm/patches
 # applied as that Dockerfile describes, from the verl repo root.
 #
 # On gfx950, Transformer Engine runs MXFP8 GEMMs on HipKittens when every GEMM dimension that carries tokens or

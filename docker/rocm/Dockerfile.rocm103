@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1
 #
-# verl Megatron MXFP8 / QAT + vLLM rollout on AMD Instinct MI350 / MI355 (gfx950), on rocm/primus:v26.10.
+# verl Megatron MXFP8 / QAT + vLLM rollout on AMD Instinct MI350 / MI355 (gfx950): ROCm 10.3, built on
+# rocm/primus:v26.10.
 #
 # Base: rocm/primus:v26.10. It already ships Python 3.12 in /opt/venv, the ROCm "TheRock" SDK (10.3) as pip
 #       packages, PyTorch 2.16, Triton 3.9, Transformer Engine 2.21 (ROCm fork, b5c00f432: includes
@@ -13,11 +14,11 @@
 #       weight-export kernels), and verl itself from the build context (this branch).
 #
 # Build from the repository root (BuildKit is required):
-#   DOCKER_BUILDKIT=1 docker build -f docker/rocm/Dockerfile.rocm.primus-v26.10 -t verl-qat:primus-v26.10 .
+#   DOCKER_BUILDKIT=1 docker build -f docker/rocm/Dockerfile.rocm103 -t verl:rocm103 .
 #
 # Run (pick GPUs with --device=/dev/dri/renderD<N>, not HIP_VISIBLE_DEVICES: Ray sets that per worker):
 #   docker run -it --device=/dev/kfd --device=/dev/dri --group-add video --ipc=host --network=host \
-#       --shm-size=64g --security-opt seccomp=unconfined -v /path/to/models:/models verl-qat:primus-v26.10
+#       --shm-size=64g --security-opt seccomp=unconfined -v /path/to/models:/models verl:rocm103
 #
 # Useful build args:
 #   BASE_IMAGE  rocm/primus tag                         (default rocm/primus:v26.10)
